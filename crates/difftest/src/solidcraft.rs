@@ -1356,6 +1356,9 @@ fn profile_curves(
     Ok(out)
 }
 
+/// One step of a case on the Rust kernel: the body it builds, or edits on its input,
+/// stored in `bodies` under the step's id. A failure is the step's [`Run`] (`Error`,
+/// `Refused` or `Deferred`), which [`run_rust_on`] prefixes with the step.
 fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -> Result<(), Run> {
     let body = match step {
         Step::Box { origin, size, .. } => {
@@ -2843,8 +2846,9 @@ mod tests {
 
     /// SolidCraft #3468: Offset Face beside a round moves the round with the face, through
     /// the fork's `SmOffsetFacesExecutive`. No case defers; the boss's wall moved out and
-    /// in reaches its closed-form volume. (The two box cases reach the executive and stop
-    /// in its blend removal: their verdict is the kernel's, not pinned here.)
+    /// in reaches its closed-form volume. The two box cases' verdict is the kernel's and is
+    /// not pinned here, but a box case that does not build must fail in its offset step
+    /// (step 3, `result`), not in the box or the fillet before it.
     #[test]
     fn offset_faces_cases_run_on_the_fork_executive() {
         let cases = load(&cases_dir(&crate::case::repo_root()), Some("3468-*")).unwrap();
@@ -2861,6 +2865,16 @@ mod tests {
             if loaded.id.contains("/boss_wall_") {
                 let (v, checks) = verdict(&loaded.case.expect, &run);
                 assert_eq!(v, "PASS", "{}: {run:?} {checks:?}", loaded.id);
+            }
+            if loaded.id.contains("/box_") {
+                let in_the_offset = match &run {
+                    Run::Done(_) => true,
+                    Run::Error(message) | Run::Refused { message, .. } => {
+                        message.starts_with("step 3 (`result`):")
+                    }
+                    Run::Deferred(_) => false,
+                };
+                assert!(in_the_offset, "{}: {run:?}", loaded.id);
             }
         }
     }
@@ -2980,6 +2994,9 @@ mod tests {
         assert!(serde_json::from_value::<Case>(changed).is_err());
     }
 
+    /// `sweep_face` sweeps the face through its point: the box's top swept 2 down and cut
+    /// away removes 10 x 10 x 2. A point on no face, on a vertex, or on an edge between two
+    /// faces picks none.
     #[test]
     fn sweep_face_cuts_a_box_by_its_own_top_face() {
         let json = |steps: Value, removed: Value| -> Case {
